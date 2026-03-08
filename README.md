@@ -107,97 +107,136 @@ sudo nano /etc/nginx/sites-available/project_name
 ```
 Add the following to the location part of the server block
 ```bash
-upstream server_One_9000 {
-    server localhost:9000;
-}
-upstream server_TWO_8000 {
-    server localhost:8000;
-}
+worker_processes auto;
 
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-
-    root /var/www/html;
-
-    # Add index.php to the list if you are using PHP
-    index index.html index.htm index.nginx-debian.html;
-    client_max_body_size 100M;
-
-    server_name example.com;
-
-    add_header X-XSS-Protection "1; mode=block";
-    add_header X-Content-Type-Options "nosniff";
-    server_tokens off;
-
-    location /socket.io/ {
-        proxy_pass http://server_One_9000;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "Upgrade";
-            proxy_set_header Host $host;
-   }
-
-    location /api/v1 {
-        proxy_pass http://server_One_9000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Referer $http_referer;
-        proxy_set_header Connection "";
-        proxy_set_header Content-Type $content_type;
-        proxy_set_header Accept-Encoding "";
-        proxy_set_header Accept-Language $http_accept_language;
-        proxy_set_header Accept-Charset $http_accept_charset;
-        proxy_set_header Accept $http_accept;
-        proxy_set_header User-Agent $http_user_agent;
-        proxy_set_header Cache-Control "no-store, no-cache, must-revalidate, post-check=0, pre-check=0";
-        proxy_set_header Pragma "no-cache";
-        proxy_pass_request_body on;
-        proxy_set_header Transfer-Encoding "";
-        proxy_buffering off;
-        proxy_request_buffering off;
-   }
-      location /api/v2 {
-        proxy_pass http://server_TWO_8000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Referer $http_referer;
-        proxy_set_header Connection "";
-        proxy_set_header Content-Type $content_type;
-        proxy_set_header Accept-Encoding "";
-        proxy_set_header Accept-Language $http_accept_language;
-        proxy_set_header Accept-Charset $http_accept_charset;
-        proxy_set_header Accept $http_accept;
-        proxy_set_header User-Agent $http_user_agent;
-        proxy_set_header Cache-Control "no-store, no-cache, must-revalidate, post-check=0, pre-check=0";
-        proxy_set_header Pragma "no-cache";
-        proxy_pass_request_body on;
-        proxy_set_header Transfer-Encoding "";
-        proxy_buffering off;
-        proxy_request_buffering off;
-    }
-    # Correctly map the PDF file location
-    location /v0/public/Invoice/ {
-    alias /root/production/public/Invoice/;
-    autoindex on;
-    allow all;
-    add_header Content-Disposition "attachment";
-    add_header X-Content-Type-Options nosniff;
-
-    # Adjust other headers as needed
-    add_header X-Frame-Options "SAMEORIGIN";
-    add_header X-XSS-Protection "1; mode=block";
-    add_header X-Content-Type-Options "nosniff";
-    add_header Referrer-Policy "strict-origin-when-cross-origin";
-    }
+events {
+     worker_connections 1024;
 }
 
+http {
+     include /etc/nginx/mime.types;
+     default_type application/octet-stream;
+
+     # Logging
+     access_log /var/log/nginx/access.log;
+     error_log /var/log/nginx/error.log;
+
+     # Performance
+     sendfile on;
+     tcp_nopush on;
+     keepalive_timeout 65;
+
+     # Gzip compression
+     gzip on;
+     gzip_vary on;
+     gzip_proxied any;
+     gzip_comp_level 6;
+     gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript image/svg+xml;
+
+     # Rate limiting zone for auth endpoints
+     limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=10r/m;
+
+     # Upload size limit (for prescription images)
+     client_max_body_size 100M;
+
+     # Upstream definitions
+     upstream frontend {
+          server frontend:3000;
+     }
+
+     upstream backend {
+          server backend:5000;
+     }
+
+     # Redirect HTTP -> HTTPS
+     server {
+          listen 80;
+          server_name _;
+          return 301 https://$host$request_uri;
+     }
+
+     # HTTPS server
+     server {
+          listen 443 ssl;
+          server_name _;
+
+          # ssl_certificate /etc/nginx/ssl/self.crt;
+          # ssl_certificate_key /etc/nginx/ssl/self.key;
+          # ssl_protocols TLSv1.2 TLSv1.3;
+          # ssl_ciphers HIGH:!aNULL:!MD5;
+          # ssl_session_cache shared:SSL:10m;
+          # ssl_session_timeout 10m;
+
+          # Security headers
+          add_header X-Frame-Options "SAMEORIGIN" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-XSS-Protection "1; mode=block" always;
+          add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+          # API proxy
+          location /api/ {
+               proxy_pass http://backend;
+               proxy_http_version 1.1;
+               proxy_set_header Host $host;
+               proxy_set_header X-Real-IP $remote_addr;
+               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+               proxy_set_header X-Forwarded-Proto $scheme;
+               proxy_set_header Referer $http_referer;
+               proxy_set_header Connection "";
+               proxy_set_header Content-Type $content_type;
+               proxy_set_header Accept-Encoding "";
+               proxy_set_header Accept-Language $http_accept_language;
+               proxy_set_header Accept-Charset $http_accept_charset;
+               proxy_set_header Accept $http_accept;
+               proxy_set_header User-Agent $http_user_agent;
+               proxy_set_header Cache-Control "no-store, no-cache, must-revalidate, post-check=0, pre-check=0";
+               proxy_set_header Pragma "no-cache";
+               proxy_pass_request_body on;
+               proxy_set_header Transfer-Encoding "";
+               proxy_buffering off;
+               proxy_request_buffering off;
+          }
+
+          # WebSocket proxy for Socket.io
+          location /socket.io/ {
+               proxy_pass http://backend;
+               proxy_http_version 1.1;
+               proxy_set_header Upgrade $http_upgrade;
+               proxy_set_header Connection "upgrade";
+               proxy_set_header Host $host;
+               proxy_set_header X-Real-IP $remote_addr;
+               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+               proxy_set_header X-Forwarded-Proto $scheme;
+               proxy_cache_bypass $http_upgrade;
+          }
+
+          # Static file caching
+          location ~* ^/(images|fonts)/ {
+               proxy_pass http://frontend;
+               expires 30d;
+               add_header Cache-Control "public, immutable";
+          }
+
+          location /_next/static/ {
+               proxy_pass http://frontend;
+               expires 365d;
+               add_header Cache-Control "public, immutable";
+          }
+
+          # Frontend proxy (default)
+          location / {
+               proxy_pass http://frontend;
+               proxy_http_version 1.1;
+               proxy_set_header Host $host;
+               proxy_set_header X-Real-IP $remote_addr;
+               proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+               proxy_set_header X-Forwarded-Proto $scheme;
+               proxy_set_header Upgrade $http_upgrade;
+               proxy_set_header Connection "upgrade";
+          }
+     }
+}
 ```
 create site-available and site-enabled to let any change make in both
 ```bash
